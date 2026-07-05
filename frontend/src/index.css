@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+/*
+  Forge design tokens.
+  Palette: a cool, near-black control-room base (not the cream/terracotta or
+  acid-green-on-black defaults) with one signal-blue accent for primary
+  action/health, plus amber/red/green status signals that mirror the job
+  lifecycle itself (queued/running -> blue, retrying/paused -> amber,
+  failed/dead-letter -> red, completed/online -> green).
+  Type: IBM Plex Mono for anything that is machine data (ids, timestamps,
+  status codes, queue/job names) since alignment and scanability matter more
+  than warmth there; Inter for UI chrome, labels, and prose.
+*/
+@theme {
+  --color-void: #0a0d12;
+  --color-surface: #12161f;
+  --color-surface-raised: #171c27;
+  --color-border-hair: #232937;
+  --color-text-primary: #e4e7ec;
+  --color-text-muted: #7c8798;
+  --color-signal-blue: #5b8def;
+  --color-signal-blue-dim: #2f4a82;
+  --color-signal-amber: #e8a33d;
+  --color-signal-red: #f0546b;
+  --color-signal-green: #3ecf8e;
+
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+  body {
+    background-color: var(--color-void);
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background-color: var(--color-signal-blue-dim);
+  }
+  *:focus-visible {
+    outline: 2px solid var(--color-signal-blue);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+.mono {
+  font-family: var(--font-mono);
+}

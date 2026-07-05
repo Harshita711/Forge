@@ -1,0 +1,137 @@
+version: "3.9"
+
+# Full topology per Section 3.3: postgres + redis, three backend services
+# (api / worker / scheduler) sharing one image with different commands, and
+# an nginx-served static frontend build. Phase 0's compose file only had
+# api + postgres; every other service was added as its Phase landed.
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: forge
+      POSTGRES_PASSWORD: forge
+      POSTGRES_DB: forge
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forge -d forge"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # No prisma/migrations/ folder is committed (see README), so `migrate deploy`
+    # has nothing to apply. `db push` syncs the schema straight to Postgres
+    # instead — same approach already used by test:integration:setup.
+    command: npx prisma db push --skip-generate --accept-data-loss
+    environment:
+      DATABASE_URL: postgresql://forge:forge@postgres:5432/forge
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: node dist/api/server.js
+    environment:
+      DATABASE_URL: postgresql://forge:forge@postgres:5432/forge
+      REDIS_URL: redis://redis:6379
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev-only-change-me}
+      JWT_ACCESS_TTL: 15m
+      CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:8081}
+      PORT: 4000
+      NODE_ENV: production
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: node dist/worker/server.js
+    environment:
+      DATABASE_URL: postgresql://forge:forge@postgres:5432/forge
+      REDIS_URL: redis://redis:6379
+      WORKER_CAPACITY: ${WORKER_CAPACITY:-5}
+      POLL_INTERVAL_MS: 1000
+      HEARTBEAT_INTERVAL_MS: 10000
+      VISIBILITY_TIMEOUT_SECONDS: 30
+      SHUTDOWN_GRACE_PERIOD_MS: 30000
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # Scale with: docker compose up --scale worker=3
+    deploy:
+      replicas: 1
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: node dist/scheduler/server.js
+    environment:
+      DATABASE_URL: postgresql://forge:forge@postgres:5432/forge
+      REDIS_URL: redis://redis:6379
+      SCHEDULER_TICK_MS: 500
+      REAPER_TICK_MS: 5000
+      METRICS_TICK_MS: 30000
+      WORKER_TIMEOUT_MS: 30000
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # Run 2+ replicas to see leader election (Section 7.1) in practice —
+    # only one becomes leader; the rest sit as standbys until it dies.
+    deploy:
+      replicas: 1
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_PROXY_TARGET: http://api:4000
+    ports:
+      - "8081:80"
+    depends_on:
+      - api
+
+volumes:
+  pg-data:
